@@ -1,0 +1,29 @@
+# (:AuraProject {id, name})-[:BELONGS_TO_ORG]->(:AuraOrganization {id})
+#
+# For a Project Admin credential (no org-level list access) -- backfills
+# `name` for each project in ProjectScopes directly via
+# AuraProjectDetailExtractor's GET /v1/tenants/{id}, since aura_projects.yaml
+# needs org-wide list visibility this credential doesn't have. Without this,
+# AuraProject nodes referenced by other project-scoped pipelines
+# (BELONGS_TO_PROJECT/MEMBER_OF_PROJECT) only ever exist as id-only stubs --
+# confirmed against a real account after a user noticed exactly that.
+- implementation: nodestream_plugin_aura.extractors:AuraProjectDetailExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraProject
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+      - type: relationship
+        node_type: AuraOrganization
+        relationship_type: BELONGS_TO_ORG
+        node_key:
+          id: !jmespath 'organization_id'

@@ -1,0 +1,94 @@
+# (:AuraUser {user_id, email, exempt_from_automatic_removal, last_activity_at,
+#  mfa_enrollment_status})
+#   -[:MEMBER_OF_ORG]->(:AuraOrganization {id})
+#   -[:HAS_ORG_ROLE {organization_id}]->(:AuraRole {name})
+#   -[:ENROLLED_IN {enrolled_at}]->(:MfaMethod {name})
+#
+# Field names confirmed against a real account via scripts/smoke_test.py's
+# schema-gap check -- the endpoint's real identity field is `user_id` (not
+# `id`) and its role field is the plural `organization_roles`.
+#
+# `organization_roles` is a list of plain strings, confirmed against a real
+# account -- e.g. `["organization-owner"]` (lowercase-hyphenated; the
+# `ORG_OWNER`-style uppercase-underscore format assumed earlier this session
+# was wrong, though the field name/plurality guess was right). It's fanned
+# out (`find_many: true`) into one relationship per list item rather than
+# stored as a raw list property, so role nodes are shared across every user
+# who holds them (e.g. every `organization-owner` anywhere links to the SAME
+# (:AuraRole {name: "organization-owner"}) node). This is what makes "who has
+# this role anywhere in my estate" a one-hop traversal instead of a per-user
+# list scan, and is what makes centrality/blast-radius analysis on roles
+# possible at all.
+#
+# `mfa_enrolled_methods` is NOT a list of plain strings, unlike
+# organization_roles -- confirmed against a real account to be a list of
+# objects: `[{"id": "totp", "enrolled_at": "2025-09-09T21:10:57.225000Z"}]`.
+# Using `find_many` here the same way as organization_roles crashed a real
+# `nodestream run organization_users` with `TypeError: unhashable type:
+# 'dict'`, since find_many's node_key just hands each raw list item to the
+# key as-is -- fine for a list of strings, wrong for a list of objects.
+# `iterate_on` is the correct mechanism instead: it decomposes the record
+# into one sub-record per list item *before* running node_key/
+# relationship_properties, so `!jmespath 'id'`/`!jmespath 'enrolled_at'`
+# below resolve against each individual method object, not the whole list --
+# and each method's own enrollment date stays correctly paired with that
+# method, not smeared across every method a user has (find_many's
+# relationship_properties/node_properties are computed once per record, not
+# once per fanned-out item, so they can't express that pairing at all).
+#
+# `key_normalization: {do_lowercase_strings: false}` on both HAS_ORG_ROLE and
+# ENROLLED_IN is deliberate -- nodestream lowercases node keys by default.
+# Harmless today (both real values already happen to be lowercase), but kept
+# so a future value with real uppercase/mixed case isn't silently mangled.
+#
+# `relationship_key: {organization_id}` on HAS_ORG_ROLE (not
+# relationship_properties) is required, not cosmetic: nodestream merges
+# relationships of the same type between the same two nodes into ONE edge
+# unless a relationship_key discriminates them (confirmed in
+# nodestream/model/graph_objects.py's Relationship docstring). Since
+# AuraRole nodes are shared across orgs, a user who holds the same role in
+# both org-1 and org-2 would otherwise collapse onto a single HAS_ORG_ROLE
+# edge, silently losing one of the two grants.
+- implementation: nodestream_plugin_aura.extractors:AuraOrganizationUserExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    organization_id: !config OrganizationId
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraUser
+        key:
+          user_id: !jmespath 'user_id'
+        properties:
+          email: !jmespath 'email'
+          exempt_from_automatic_removal: !jmespath 'exempt_from_automatic_removal'
+          last_activity_at: !jmespath 'last_activity_at'
+          mfa_enrollment_status: !jmespath 'mfa_enrollment_status'
+      - type: relationship
+        node_type: AuraOrganization
+        relationship_type: MEMBER_OF_ORG
+        node_key:
+          id: !jmespath 'organization_id'
+      - type: relationship
+        node_type: AuraRole
+        relationship_type: HAS_ORG_ROLE
+        find_many: true
+        node_key:
+          name: !jmespath 'organization_roles'
+        key_normalization:
+          do_lowercase_strings: false
+        relationship_key:
+          organization_id: !jmespath 'organization_id'
+      - type: relationship
+        node_type: MfaMethod
+        relationship_type: ENROLLED_IN
+        iterate_on: !jmespath 'mfa_enrolled_methods'
+        node_key:
+          name: !jmespath 'id'
+        key_normalization:
+          do_lowercase_strings: false
+        relationship_properties:
+          enrolled_at: !jmespath 'enrolled_at'

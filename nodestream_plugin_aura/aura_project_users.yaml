@@ -1,0 +1,48 @@
+# (:AuraUser {user_id, email})
+#   -[:MEMBER_OF_PROJECT]->(:AuraProject {id})
+#   -[:HAS_PROJECT_ROLE {project_id}]->(:AuraRole {name})
+#
+# Field names confirmed against a real account via scripts/smoke_test.py's
+# schema-gap check -- the endpoint's real identity field is `user_id` (not
+# `id`) and its role field is the plural `project_roles`.
+#
+# Same reasoning as organization_users.yaml: `project_roles` is fanned out
+# (find_many) into shared :AuraRole nodes rather than stored as a raw list
+# property, key_normalization disables the default lowercasing (the exact
+# casing of project_roles' values isn't independently confirmed -- see
+# AuraProjectUserExtractor's docstring -- so this is a precaution, not a
+# response to an observed uppercase value the way it was for
+# organization_roles), and relationship_key: {project_id} (not
+# relationship_properties) is required so a user with the same project role
+# on two different projects gets two discriminated edges instead of one
+# collapsing onto the other.
+- implementation: nodestream_plugin_aura.extractors:AuraProjectUserExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraUser
+        key:
+          user_id: !jmespath 'user_id'
+        properties:
+          email: !jmespath 'email'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: MEMBER_OF_PROJECT
+        node_key:
+          id: !jmespath 'project_id'
+      - type: relationship
+        node_type: AuraRole
+        relationship_type: HAS_PROJECT_ROLE
+        find_many: true
+        node_key:
+          name: !jmespath 'project_roles'
+        key_normalization:
+          do_lowercase_strings: false
+        relationship_key:
+          project_id: !jmespath 'project_id'

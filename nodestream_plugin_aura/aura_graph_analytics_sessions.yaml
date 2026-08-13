@@ -1,0 +1,63 @@
+# (:AuraGraphAnalyticsSession {id, name, memory, status, created_at, host, expiry_date})
+#   -[:BELONGS_TO_PROJECT]->(:AuraProject {id})
+#   -[:RUNS_ON]->(:AuraInstance {id})  (when attached to an instance)
+#   -[:CREATED_BY]->(:AuraUser {user_id})
+#   -[:HOSTED_IN]->(:AuraRegion {name, cloud_provider})
+#   -[:HOSTED_BY]->(:AuraCloudProvider {name})
+#
+# AuraGraphAnalyticsSessionExtractor calls the per-session GET
+# /graph-analytics/sessions/{id} detail endpoint, so all of these are present.
+#
+# user_id moved from a property to a CREATED_BY relationship: :AuraUser
+# already exists in this graph (populated by organization_users.yaml/
+# project_users.yaml), so leaving user_id as a disconnected string here was
+# a missed join, not a stylistic choice -- "who spun up this session" is the
+# literal attribution use case this whole plugin exists for, and it's now a
+# one-hop traversal from AuraUser instead of an application-level lookup.
+# Same cloud_provider/region rationale as instances.yaml.
+- implementation: nodestream_plugin_aura.extractors:AuraGraphAnalyticsSessionExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraGraphAnalyticsSession
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+          memory: !jmespath 'memory'
+          status: !jmespath 'status'
+          created_at: !jmespath 'created_at'
+          host: !jmespath 'host'
+          expiry_date: !jmespath 'expiry_date'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: BELONGS_TO_PROJECT
+        node_key:
+          id: !jmespath 'project_id'
+      - type: relationship
+        node_type: AuraInstance
+        relationship_type: RUNS_ON
+        node_key:
+          id: !jmespath 'instance_id'
+      - type: relationship
+        node_type: AuraUser
+        relationship_type: CREATED_BY
+        node_key:
+          user_id: !jmespath 'user_id'
+      - type: relationship
+        node_type: AuraRegion
+        relationship_type: HOSTED_IN
+        node_key:
+          name: !jmespath 'region'
+          cloud_provider: !jmespath 'cloud_provider'
+      - type: relationship
+        node_type: AuraCloudProvider
+        relationship_type: HOSTED_BY
+        node_key:
+          name: !jmespath 'cloud_provider'

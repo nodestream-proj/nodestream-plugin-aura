@@ -1,0 +1,57 @@
+# (:AuraInvite {email, organization_id, status})
+#   -[:INVITED_TO]->(:AuraOrganization {id})
+#   -[:INVITED_WITH_ROLE]->(:AuraRole {name})
+#
+# LEAST CONFIRMED extractor in this plugin -- see
+# AuraOrganizationInviteExtractor's docstring. Field names below are a best
+# guess (matching organization_users.yaml's confirmed `email`/
+# `organization_roles` naming), not yet verified against a real organization
+# with pending invites.
+#
+# Modeled as its own :AuraInvite node rather than merged into :AuraUser:
+# an invitee hasn't necessarily accepted, so they may not be an actual
+# member yet -- conflating "invited" with "confirmed access" would itself
+# be a compliance-relevant modeling mistake for a tool whose whole purpose
+# is showing who currently has access.
+- implementation: nodestream_plugin_aura.extractors:AuraOrganizationInviteExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    organization_id: !config OrganizationId
+
+#
+# AuraInvite's key is (email, organization_id), not email alone: the same
+# email can be invited to more than one organization, and a key of email
+# alone would silently collapse two distinct invites onto one node,
+# discarding whichever organization_id/role/status lost the race. This was
+# a latent bug in the original single-field key, not something this
+# redesign introduces.
+#
+# `organization_roles` fans out (find_many) into shared :AuraRole nodes,
+# same reasoning and `key_normalization` override as organization_users.yaml
+# -- no additional relationship_key is needed here (unlike HAS_ORG_ROLE)
+# since AuraInvite is now itself uniquely scoped to one organization_id, so
+# there's nothing left to discriminate on this edge.
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraInvite
+        key:
+          email: !jmespath 'email'
+          organization_id: !jmespath 'organization_id'
+        properties:
+          status: !jmespath 'status'
+      - type: relationship
+        node_type: AuraOrganization
+        relationship_type: INVITED_TO
+        node_key:
+          id: !jmespath 'organization_id'
+      - type: relationship
+        node_type: AuraRole
+        relationship_type: INVITED_WITH_ROLE
+        find_many: true
+        node_key:
+          name: !jmespath 'organization_roles'
+        key_normalization:
+          do_lowercase_strings: false

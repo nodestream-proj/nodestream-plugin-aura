@@ -1,0 +1,38 @@
+# A sample project for running nodestream-plugin-aura locally. Once the
+# plugin is installed (`pip install -e ..` from this directory, or
+# `pip install nodestream-plugin-aura` once published), its pipelines are
+# available automatically under the `aura` plugin scope -- no YAML to copy.
+plugins:
+  - name: aura
+    targets:
+      - neo4j
+    config:
+      ClientId: !env AURA_CLIENT_ID
+      ClientSecret: !env AURA_CLIENT_SECRET
+      # Only used by aura_organizations/aura_projects/aura_organization_users/
+      # aura_organization_invites -- these list an org's full contents and
+      # need org-level access.
+      OrganizationId: !env AURA_ORGANIZATION_ID
+      # Every project-scoped pipeline (aura_project_details, aura_instances,
+      # aura_project_users, aura_customer_managed_keys,
+      # aura_graph_analytics_sessions, aura_agents) reads this list instead
+      # of a single project id -- add one entry per project to sweep them
+      # all in one `nodestream run`, e.g.:
+      #   ProjectScopes:
+      #     - organization_id: org-1
+      #       project_id: proj-a
+      #     - organization_id: org-1
+      #       project_id: proj-b
+      #     - organization_id: org-2
+      #       project_id: proj-c
+      ProjectScopes:
+        - organization_id: !env AURA_ORGANIZATION_ID
+          project_id: !env AURA_PROJECT_ID
+
+targets:
+  neo4j:
+    database: neo4j
+    uri: !env NEO4J_URI
+    username: !env NEO4J_USERNAME
+    password: !env NEO4J_PASSWORD
+    database_name: !env NEO4J_DATABASE

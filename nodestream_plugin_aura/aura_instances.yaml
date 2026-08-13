@@ -1,0 +1,83 @@
+# (:AuraInstance {id, name, status, type, memory,
+#  storage, connection_url, metrics_integration_url, created_at,
+#  vector_optimized, cdc_enrichment_mode, graph_analytics_plugin,
+#  secondaries_count, graph_nodes, graph_relationships})
+#   -[:BELONGS_TO_PROJECT]->(:AuraProject {id})
+#   -[:ENCRYPTED_WITH]->(:AuraCustomerManagedKey {id})  (only if the instance has one)
+#   -[:HOSTED_IN]->(:AuraRegion {name, cloud_provider})
+#   -[:HOSTED_BY]->(:AuraCloudProvider {name})
+#
+# AuraInstanceExtractor calls the per-instance GET /v1/instances/{id} detail
+# endpoint (not just the list endpoint), so all of these fields are present.
+# graph_nodes/graph_relationships/customer_managed_key_id were only observed
+# on some instances in testing (likely running-state/CMK-enabled instances
+# only) -- nodestream skips the ENCRYPTED_WITH relationship automatically
+# when customer_managed_key_id is absent (RelationshipInterpretation only
+# emits a related node when its key resolves to a valid id).
+#
+# cloud_provider/region moved from properties to relationships: the same
+# value repeats identically across Instance, CustomerManagedKey, and
+# GraphAnalyticsSession, which is exactly the signal for pulling it out into
+# a shared node -- "which resources are in this region" or "if this cloud
+# provider has an incident, what's affected" become one-hop/two-hop
+# traversals from :AuraRegion/:AuraCloudProvider instead of a string match
+# repeated across three different node types.
+#
+# :AuraRegion is keyed on (name, cloud_provider), not name alone -- a region
+# name is only meaningful within one provider's namespace (AWS's "us-east-1"
+# and some hypothetical differently-scoped "us-east-1" elsewhere shouldn't
+# collide), so the composite key is the true unique identifier here, not an
+# arbitrary "merge on everything." :AuraCloudProvider is keyed on name alone
+# since it genuinely is globally unique (gcp/aws/azure). key_normalization
+# is left at its default (lowercase) for both, since observed cloud_provider/
+# region values are already lowercase -- unlike Role/MfaMethod names, there's
+# no real API casing being fought here.
+- implementation: nodestream_plugin_aura.extractors:AuraInstanceExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraInstance
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+          status: !jmespath 'status'
+          type: !jmespath 'type'
+          memory: !jmespath 'memory'
+          storage: !jmespath 'storage'
+          connection_url: !jmespath 'connection_url'
+          metrics_integration_url: !jmespath 'metrics_integration_url'
+          created_at: !jmespath 'created_at'
+          vector_optimized: !jmespath 'vector_optimized'
+          cdc_enrichment_mode: !jmespath 'cdc_enrichment_mode'
+          graph_analytics_plugin: !jmespath 'graph_analytics_plugin'
+          secondaries_count: !jmespath 'secondaries_count'
+          graph_nodes: !jmespath 'graph_nodes'
+          graph_relationships: !jmespath 'graph_relationships'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: BELONGS_TO_PROJECT
+        node_key:
+          id: !jmespath 'project_id'
+      - type: relationship
+        node_type: AuraCustomerManagedKey
+        relationship_type: ENCRYPTED_WITH
+        node_key:
+          id: !jmespath 'customer_managed_key_id'
+      - type: relationship
+        node_type: AuraRegion
+        relationship_type: HOSTED_IN
+        node_key:
+          name: !jmespath 'region'
+          cloud_provider: !jmespath 'cloud_provider'
+      - type: relationship
+        node_type: AuraCloudProvider
+        relationship_type: HOSTED_BY
+        node_key:
+          name: !jmespath 'cloud_provider'

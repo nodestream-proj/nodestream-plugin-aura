@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "nodestream-plugin-aura"
+version = "0.1.0"
+description = "Nodestream extractors for pulling the Neo4j Aura organization/project/instance/user/permission hierarchy into a graph."
+license = "Apache-2.0"
+authors = ["Soham Dhodapkar"]
+readme = "README.md"
+packages = [{ include = "nodestream_plugin_aura" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+nodestream = "^0.16.1"
+httpx = "^0.27"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.2"
+pytest-asyncio = "^1.0.0"
+pytest-httpx = "^0.34.0"  # is_reusable=True (used in tests/test_smoke_test_discovery.py) needs >=0.34.0
+pytest-cov = "^5.0.0"
+pyhamcrest = "^2.1.0"
+black = "^25.1.0"
+isort = "^6.0.1"
+ruff = "^0.11.12"
+
+[tool.poetry.plugins."nodestream.plugins"]
+projects = "nodestream_plugin_aura.plugin"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E501"]

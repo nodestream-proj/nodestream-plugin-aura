@@ -1,0 +1,15 @@
+# (:AuraOrganization {id, name})
+- implementation: nodestream_plugin_aura.extractors:AuraOrganizationExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraOrganization
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'

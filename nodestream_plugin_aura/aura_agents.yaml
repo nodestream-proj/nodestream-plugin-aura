@@ -1,0 +1,52 @@
+# (:AuraAgent {id, name, description, dbid, is_private, is_mcp_enabled,
+#  enabled})
+#   -[:BELONGS_TO_PROJECT]->(:AuraProject {id})
+#   -[:QUERIES]->(:AuraInstance {id})  -- SPECULATIVE, see below
+#
+# AuraAgentExtractor calls the per-agent GET .../agents/{id} detail endpoint,
+# so all of these are present (is_private/is_mcp_enabled aren't in the list
+# endpoint's summary).
+#
+# QUERIES is a guess: dbid is assumed to equal the target AuraInstance's own
+# `id`, on the reasoning that an Aura Agent queries a specific database and
+# an Aura instance is (today) effectively single-database, so "database id"
+# most plausibly just means "instance id." This is NOT independently
+# confirmed against a real account -- unlike cloud_provider/region/user_id
+# above, which are all definitionally unambiguous, this one could be wrong
+# (e.g. if dbid refers to something finer-grained than an instance). dbid is
+# deliberately kept as a property too (not removed like user_id/
+# cloud_provider/region were), so the raw value stays visible for manual
+# cross-referencing even if the QUERIES edge turns out to point at a
+# non-existent instance. Verify against a real Agent + its instance before
+# trusting this edge -- same caution as AuraOrganizationInviteExtractor's
+# unverified fields.
+- implementation: nodestream_plugin_aura.extractors:AuraAgentExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraAgent
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+          description: !jmespath 'description'
+          dbid: !jmespath 'dbid'
+          is_private: !jmespath 'is_private'
+          is_mcp_enabled: !jmespath 'is_mcp_enabled'
+          enabled: !jmespath 'enabled'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: BELONGS_TO_PROJECT
+        node_key:
+          id: !jmespath 'project_id'
+      - type: relationship
+        node_type: AuraInstance
+        relationship_type: QUERIES
+        node_key:
+          id: !jmespath 'dbid'

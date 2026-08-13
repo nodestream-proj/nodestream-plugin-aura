@@ -1,0 +1,48 @@
+# (:AuraCustomerManagedKey {id, name, status, created, key_id, type, instance_type})
+#   -[:BELONGS_TO_PROJECT]->(:AuraProject {id})
+#   -[:HOSTED_IN]->(:AuraRegion {name, cloud_provider})
+#   -[:HOSTED_BY]->(:AuraCloudProvider {name})
+#
+# AuraCustomerManagedKeyExtractor calls the per-key GET
+# /customer-managed-keys/{id} detail endpoint, so all of these are present.
+#
+# cloud_provider/region moved to shared :AuraRegion/:AuraCloudProvider nodes
+# -- same reasoning as instances.yaml (this identical value repeats across
+# Instance/CMK/Session, the textbook signal for extracting a shared
+# dimension node rather than a per-node-type string property).
+- implementation: nodestream_plugin_aura.extractors:AuraCustomerManagedKeyExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraCustomerManagedKey
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+          status: !jmespath 'status'
+          created: !jmespath 'created'
+          key_id: !jmespath 'key_id'
+          type: !jmespath 'type'
+          instance_type: !jmespath 'instance_type'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: BELONGS_TO_PROJECT
+        node_key:
+          id: !jmespath 'project_id'
+      - type: relationship
+        node_type: AuraRegion
+        relationship_type: HOSTED_IN
+        node_key:
+          name: !jmespath 'region'
+          cloud_provider: !jmespath 'cloud_provider'
+      - type: relationship
+        node_type: AuraCloudProvider
+        relationship_type: HOSTED_BY
+        node_key:
+          name: !jmespath 'cloud_provider'
