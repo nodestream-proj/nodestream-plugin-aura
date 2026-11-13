@@ -28,7 +28,7 @@ jobs:
         run: poetry run pytest --cov nodestream_plugin_aura --cov-report term --cov-report xml
       - name: Run Lints
         run: |
-          poetry run ruff nodestream_plugin_aura tests
+          poetry run ruff check nodestream_plugin_aura tests
           poetry run black nodestream_plugin_aura tests --check
           poetry run isort nodestream_plugin_aura tests --check-only
       - name: Upload coverage reports to Codecov
