@@ -124,6 +124,63 @@ those nodes — relationships default to eager node creation, so an
 out-of-order run won't error, but you'll get stub nodes with no properties
 until the owning pipeline backfills them.
 
+## Keeping the graph current (data expiry)
+
+The collection pipelines only ever **upsert**. If something is removed in
+Aura, nothing removes it from the graph: a revoked role keeps its
+`HAS_ORG_ROLE`/`HAS_PROJECT_ROLE` edge, an IP range taken off an allow list
+keeps its `ALLOWS` edge (so the graph still says that network can reach the
+instance), a filter detached from an instance keeps `APPLIES_TO_INSTANCE`,
+and a deleted instance, key, or agent stays as a node. For a compliance or
+access-attribution graph those are wrong answers, so expire stale data.
+
+The plugin ships two expiry pipelines, `aura_ttl_relationships` and
+`aura_ttl_nodes`, covering every node and relationship type it writes. Every
+object carries a `last_ingested_at` timestamp that nodestream refreshes
+whenever a pipeline writes it; these pipelines delete objects whose timestamp
+is older than your window. They're opt-in: set the window in this plugin's
+config in `nodestream.yaml`,
+
+```yaml
+plugins:
+  - name: aura
+    config:
+      TtlExpiryHours: 168   # 7 days -- see the warnings below before choosing
+```
+
+then run them **after** your collection pipelines, relationships first:
+
+```bash
+nodestream run aura_ttl_relationships aura_ttl_nodes
+```
+
+If `TtlExpiryHours` is missing, they delete nothing and log a warning — they
+deliberately don't fall back to nodestream's own 24-hour default, which would
+wipe live data for anyone running less than daily. A non-positive or
+non-integer value fails the run.
+
+Things to get right before turning this on:
+
+- **Set the window longer than your run gap.** It must comfortably exceed the
+  longest gap between runs of *any* collection pipeline you rely on — 2x is a
+  sane floor — or live data that just hasn't been refreshed yet is deleted.
+- **A pipeline you stop running expires too.** Dropping a project from
+  `ProjectScopes`, or no longer running `aura_organization_invites`, means
+  that data ages out after the window. That is intended, but it can surprise
+  you if you run different pipelines for Org Admin vs Project Admin
+  credentials.
+- **Failed runs don't refresh anything.** A bare `403`/`404` fails a run on
+  purpose, so whatever it didn't reach keeps its old timestamp and still
+  expires once it's past the window.
+- **Try it on a throwaway database first.** The delete queries run through the
+  Neo4j connector plugin and haven't been exercised against a live database
+  from this repo's tests.
+
+Coverage can't silently drift: `tests/test_ttl_coverage.py` fails if any
+pipeline writes a node or relationship type the TTL lists omit (or the lists
+name one nothing writes), and `nodestream audit ttls` reports the same from
+your side.
+
 ## Graph model
 
 ```text
@@ -205,6 +262,36 @@ region name is only meaningful within one provider's namespace.
   effectively single-database today) but not independently confirmed — the
   raw `dbid` is kept as a property on the node regardless, so it stays
   inspectable even if the relationship guess is wrong.
+  Once `aura_agents`, `aura_instances` and `aura_databases` have all run, check
+  the guess against real data. The `QUERIES` edge eagerly creates an
+  `AuraInstance` stub for every `dbid`, so the check must require a *named*
+  instance, not just a matching node:
+
+  ```cypher
+  MATCH (a:AuraAgent)
+  OPTIONAL MATCH (i:AuraInstance {id: a.dbid}) WHERE i.name IS NOT NULL
+  OPTIONAL MATCH (d:AuraDatabase {id: a.dbid})
+  RETURN a.id, a.dbid,
+         i IS NOT NULL AS matches_real_instance,
+         d IS NOT NULL AS matches_database
+  ```
+
+  If `matches_real_instance` is false and `matches_database` is true, `dbid` is
+  a database id and the edge should point at `AuraDatabase` instead.
+- **Stub nodes** appear when a pipeline references a node that its owning
+  pipeline hasn't loaded yet (for example `aura_ip_filters` pointing at an
+  instance before `aura_instances` has run). They're created on purpose
+  (eager creation means an out-of-order run drops no edges) and are filled in
+  by the owning pipeline later. To find any still unfilled, look for nodes
+  missing a property only the owning pipeline sets:
+
+  ```cypher
+  MATCH (n) WHERE (n:AuraInstance OR n:AuraProject OR n:AuraOrganization)
+    AND n.name IS NULL
+  RETURN labels(n)[0] AS label, n.id AS id
+  UNION
+  MATCH (u:AuraUser) WHERE u.email IS NULL RETURN 'AuraUser' AS label, u.user_id AS id
+  ```
 - **`aura_ip_filters`, `aura_databases`, `aura_virtual_graphs`** were added
   from the v2beta1 OpenAPI spec (`https://api.neo4j.io/v2beta1/spec.json`)
   and are covered by mocked tests, but have not yet been run against a real
@@ -234,7 +321,7 @@ git clone https://github.com/nodestream-proj/nodestream-plugin-aura
 cd nodestream-plugin-aura
 poetry install
 
-poetry run pytest --cov nodestream_plugin_aura   # 87 tests, all mocked -- no live Aura account touched
+poetry run pytest --cov nodestream_plugin_aura   # 101 tests, all mocked -- no live Aura account touched
 poetry run ruff nodestream_plugin_aura tests
 poetry run black nodestream_plugin_aura tests --check
 poetry run isort nodestream_plugin_aura tests --check-only

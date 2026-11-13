@@ -10,6 +10,7 @@ from .organizations import AuraOrganizationExtractor
 from .project_details import AuraProjectDetailExtractor
 from .project_users import AuraProjectUserExtractor
 from .projects import AuraProjectExtractor
+from .ttl import AuraTimeToLiveExtractor
 from .virtual_graphs import AuraVirtualGraphExtractor
 
 __all__ = (
@@ -25,5 +26,6 @@ __all__ = (
     "AuraProjectDetailExtractor",
     "AuraProjectExtractor",
     "AuraProjectUserExtractor",
+    "AuraTimeToLiveExtractor",
     "AuraVirtualGraphExtractor",
 )

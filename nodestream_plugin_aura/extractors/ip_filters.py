@@ -41,6 +41,33 @@ class AuraIpFilterExtractor(AuraExtractor):
         )
         for ip_filter in ip_filters:
             ip_filter.setdefault("organization_id", self.organization_id)
-            for entry in ip_filter.get("allow_list") or []:
-                entry["cidr"] = f"{entry['address']}/{entry['prefix_len']}"
+            if ip_filter.get("allow_list"):
+                ip_filter["allow_list"] = _merge_duplicate_cidrs(
+                    ip_filter["allow_list"]
+                )
             yield ip_filter
+
+
+def _merge_duplicate_cidrs(allow_list):
+    """Adds a derived `cidr` to each entry and merges entries sharing one.
+
+    The pipeline writes one (:AuraIpFilter)-[:ALLOWS]->(:AuraIpRange) edge per
+    entry, and nodestream collapses same-type edges between the same two nodes
+    into one -- so two entries for the same CIDR with different descriptions
+    would otherwise keep only whichever was written last. Merging here keeps
+    every distinct description (joined with "; ") on the single edge instead.
+    """
+    merged = {}
+    descriptions = {}
+    for entry in allow_list:
+        cidr = f"{entry['address']}/{entry['prefix_len']}"
+        merged.setdefault(cidr, {**entry, "cidr": cidr})
+        seen = descriptions.setdefault(cidr, [])
+        description = entry.get("description")
+        if description and description not in seen:
+            seen.append(description)
+
+    for cidr, entry in merged.items():
+        if descriptions[cidr]:
+            entry["description"] = "; ".join(descriptions[cidr])
+    return list(merged.values())

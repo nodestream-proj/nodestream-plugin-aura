@@ -1,0 +1,49 @@
+# Expires relationships that no aura_* pipeline has re-ingested within the last
+# `TtlExpiryHours` hours.
+#
+# nodestream only ever upserts: a role that was revoked, an IP range that was
+# removed from an allow list, or an instance that was deleted stays in the graph
+# forever unless something expires it. This pipeline does that, using each
+# object's `last_ingested_at` timestamp (set every time a pipeline writes it).
+#
+# OPT-IN AND EXPLICIT: `TtlExpiryHours` has no default. Set it in this plugin's
+# `config:` in nodestream.yaml. If it is missing, this pipeline deletes nothing
+# and logs a warning (see AuraTimeToLiveExtractor for why it doesn't fall back
+# to nodestream's own 24-hour default). It must be comfortably longer than the
+# longest gap between runs of ANY aura_* pipeline (2x is a sane floor). A
+# pipeline you stop running (or a project you remove from `ProjectScopes`) has
+# its data expire after this long -- intended, but be aware of it.
+#
+# A run that aborts partway (a bare 403/404 fails the run on purpose) simply
+# doesn't refresh the rest, so data older than the window is still removed.
+# Run the relationships pipeline, then the nodes pipeline, AFTER your aura_*
+# pipelines -- never before.
+#
+# Coverage is enforced by tests/test_ttl_coverage.py: every node/relationship
+# type any aura_* pipeline writes must be listed here, so adding a type
+# without adding it to these lists fails CI.
+- implementation: nodestream_plugin_aura.extractors:AuraTimeToLiveExtractor
+  arguments:
+    graph_object_type: RELATIONSHIP
+    expiry_in_hours: !config TtlExpiryHours
+    configurations:
+      - object_type: BELONGS_TO_ORG
+      - object_type: BELONGS_TO_PROJECT
+      - object_type: BELONGS_TO_INSTANCE
+      - object_type: MEMBER_OF_ORG
+      - object_type: MEMBER_OF_PROJECT
+      - object_type: HAS_ORG_ROLE
+      - object_type: HAS_PROJECT_ROLE
+      - object_type: ENROLLED_IN
+      - object_type: INVITED_TO
+      - object_type: INVITED_WITH_ROLE
+      - object_type: ENCRYPTED_WITH
+      - object_type: RUNS_ON
+      - object_type: CREATED_BY
+      - object_type: QUERIES
+      - object_type: HOSTED_IN
+      - object_type: HOSTED_BY
+      - object_type: APPLIES_TO_ORG
+      - object_type: APPLIES_TO_PROJECT
+      - object_type: APPLIES_TO_INSTANCE
+      - object_type: ALLOWS
