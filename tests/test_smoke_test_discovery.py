@@ -39,6 +39,19 @@ def mock_empty_resources_for_project(httpx_mock, org_id, project_id):
         url=f"{BASE_URL}/v2beta1/organizations/{org_id}/projects/{project_id}/agents",
         json={"data": []},
     )
+    # aura_databases discovers instances via v2beta1 (not the v1 list above);
+    # an empty list means no per-instance databases calls follow.
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/v2beta1/organizations/{org_id}/projects/{project_id}/instances",
+        json={"data": []},
+    )
+    httpx_mock.add_response(
+        url=(
+            f"{BASE_URL}/v2beta1/organizations/{org_id}/projects/{project_id}"
+            "/virtual-graphs?page_limit=100"
+        ),
+        json={"data": [], "links": {"next": None}},
+    )
 
 
 @pytest.mark.asyncio
@@ -65,6 +78,9 @@ async def test_a_skipped_projects_cmk_call_does_not_block_the_next_projects_cmk_
     )
     httpx_mock.add_response(
         url=f"{BASE_URL}/v2beta1/organizations/org-1/invites", json={"data": []}
+    )
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/v2beta1/organizations/org-1/ip-filters", json=[]
     )
     httpx_mock.add_response(
         url=f"{BASE_URL}/v2beta1/organizations/org-1/projects",

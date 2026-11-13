@@ -1,0 +1,65 @@
+# (:AuraVirtualGraph {id, name, status, memory, bolt_url, private_bolt_url,
+#  public_access_enabled, private_access_enabled, data_source_id,
+#  data_source_type, maximum_bytes_billed, created_at, error_detail})
+#   -[:BELONGS_TO_PROJECT]->(:AuraProject {id})
+#   -[:HOSTED_IN]->(:AuraRegion {name, cloud_provider})
+#   -[:HOSTED_BY]->(:AuraCloudProvider {name})
+#
+# HOSTED_IN / HOSTED_BY reuse the same shared :AuraRegion / :AuraCloudProvider
+# nodes (and the same keys) as aura_instances, customer managed keys, and
+# graph analytics sessions, so "what's affected if this region has an
+# incident" now includes virtual graphs with no extra modelling.
+#
+# public_access_enabled / private_access_enabled are kept as properties
+# because they're the direct "is this exposed to the internet" answer for a
+# virtual graph. data_source_id/data_source_type are kept as plain strings
+# rather than edges: the spec doesn't say what data_source_id refers to (e.g.
+# a BigQuery dataset), so there's no node to point an edge at.
+#
+# Cursor-paginated endpoint -- see AuraVirtualGraphExtractor for the
+# not-yet-verified first-page request shape.
+#
+# Project-scoped: uses ProjectScopes (both organization_id and project_id are
+# required).
+- implementation: nodestream_plugin_aura.extractors:AuraVirtualGraphExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraVirtualGraph
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+          status: !jmespath 'status'
+          memory: !jmespath 'memory'
+          bolt_url: !jmespath 'bolt_url'
+          private_bolt_url: !jmespath 'private_bolt_url'
+          public_access_enabled: !jmespath 'public_access_enabled'
+          private_access_enabled: !jmespath 'private_access_enabled'
+          data_source_id: !jmespath 'data_source_id'
+          data_source_type: !jmespath 'data_source_type'
+          maximum_bytes_billed: !jmespath 'maximum_bytes_billed'
+          created_at: !jmespath 'created_at'
+          error_detail: !jmespath 'error_detail'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: BELONGS_TO_PROJECT
+        node_key:
+          id: !jmespath 'project_id'
+      - type: relationship
+        node_type: AuraRegion
+        relationship_type: HOSTED_IN
+        node_key:
+          name: !jmespath 'region'
+          cloud_provider: !jmespath 'cloud_provider'
+      - type: relationship
+        node_type: AuraCloudProvider
+        relationship_type: HOSTED_BY
+        node_key:
+          name: !jmespath 'cloud_provider'

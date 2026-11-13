@@ -33,13 +33,16 @@ from nodestream_plugin_aura.api_client import AuraApiError  # noqa: E402
 from nodestream_plugin_aura.extractors import (  # noqa: E402
     AuraAgentExtractor,
     AuraCustomerManagedKeyExtractor,
+    AuraDatabaseExtractor,
     AuraGraphAnalyticsSessionExtractor,
     AuraInstanceExtractor,
+    AuraIpFilterExtractor,
     AuraOrganizationExtractor,
     AuraOrganizationInviteExtractor,
     AuraOrganizationUserExtractor,
     AuraProjectExtractor,
     AuraProjectUserExtractor,
+    AuraVirtualGraphExtractor,
 )
 
 # Fields each nodestream_plugin_aura/aura_*.yaml currently maps into the graph, keyed
@@ -139,6 +142,38 @@ MAPPED_FIELDS = {
         "is_private",
         "is_mcp_enabled",
         "enabled",
+        "project_id",
+    },
+    # From the v2beta1 OpenAPI spec (api.neo4j.io/v2beta1/spec.json), not yet
+    # confirmed against a real account -- treat a "phantom field" report on
+    # these as "spec says it exists, this account just didn't return it".
+    "ip_filters": {
+        "id",
+        "name",
+        "description",
+        "organization_id",
+        "filtering_disabled",
+        "updated_at",
+        "allow_list",
+        "filtered_entities",
+    },
+    "databases": {"id", "name", "instance_id", "project_id"},
+    "virtual_graphs": {
+        "id",
+        "name",
+        "status",
+        "memory",
+        "cloud_provider",
+        "region",
+        "bolt_url",
+        "private_bolt_url",
+        "public_access_enabled",
+        "private_access_enabled",
+        "data_source_id",
+        "data_source_type",
+        "maximum_bytes_billed",
+        "created_at",
+        "error_detail",
         "project_id",
     },
 }
@@ -246,6 +281,12 @@ async def main() -> None:
             resource_key="organization_invites",
         )
 
+        await drain(
+            f"IP filters ({org_id})",
+            AuraIpFilterExtractor(client_id, client_secret, org_id),
+            resource_key="ip_filters",
+        )
+
         projects = await drain(
             f"Projects ({org_id})",
             AuraProjectExtractor(client_id, client_secret, org_id),
@@ -290,6 +331,16 @@ async def main() -> None:
                 f"Agents ({project_id})",
                 AuraAgentExtractor(client_id, client_secret, project_scope),
                 resource_key="agents",
+            )
+            await drain(
+                f"Databases ({project_id})",
+                AuraDatabaseExtractor(client_id, client_secret, project_scope),
+                resource_key="databases",
+            )
+            await drain(
+                f"Virtual graphs ({project_id})",
+                AuraVirtualGraphExtractor(client_id, client_secret, project_scope),
+                resource_key="virtual_graphs",
             )
 
     if skipped:

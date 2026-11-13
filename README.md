@@ -67,10 +67,10 @@ entry per project:
 
 This list is **not** auto-populated from `aura_organizations`/`aura_projects`
 discovering projects under an org — those two pipelines list everything
-they can see on their own, but the six project-scoped pipelines
+they can see on their own, but the eight project-scoped pipelines
 (`aura_project_details`, `aura_instances`, `aura_project_users`,
 `aura_customer_managed_keys`, `aura_graph_analytics_sessions`,
-`aura_agents`) only ever process what's explicitly listed in
+`aura_agents`, `aura_databases`, `aura_virtual_graphs`) only ever process what's explicitly listed in
 `ProjectScopes`. There's no automatic "run this for every project
 `aura_projects` just found" chaining — if your org has 10 projects and you
 want instances/keys/sessions/agents for all 10, list all 10 here yourself.
@@ -92,24 +92,27 @@ both safer. See `playground_project/.env.example` for a template.
 ```bash
 nodestream show   # confirms every pipeline resolves under the `aura` scope
 nodestream run aura_organizations aura_projects aura_instances \
-  aura_organization_users aura_organization_invites aura_project_users \
-  aura_customer_managed_keys aura_graph_analytics_sessions aura_agents -v
+  aura_organization_users aura_organization_invites aura_ip_filters \
+  aura_project_users aura_customer_managed_keys aura_graph_analytics_sessions \
+  aura_agents aura_databases aura_virtual_graphs -v
 ```
 
 Not every pipeline needs the same level of access:
 
 - **Org Admin** (full org visibility): run `aura_organizations`,
-  `aura_projects`, `aura_organization_users`, `aura_organization_invites` for
-  the org's full contents, plus `aura_instances`, `aura_project_users`,
-  `aura_customer_managed_keys`, `aura_graph_analytics_sessions`, and
-  `aura_agents` for whichever projects you listed in `ProjectScopes`. Skip
+  `aura_projects`, `aura_organization_users`, `aura_organization_invites`,
+  `aura_ip_filters` for the org's full contents, plus `aura_instances`,
+  `aura_project_users`, `aura_customer_managed_keys`,
+  `aura_graph_analytics_sessions`, `aura_agents`, `aura_databases`, and
+  `aura_virtual_graphs` for whichever projects you listed in `ProjectScopes`. Skip
   `aura_project_details` — it's redundant here, since `aura_projects`
   already gives every project a real `name`.
-- **Project Admin** (no org-level list access): skip the four org-wide
+- **Project Admin** (no org-level list access): skip the five org-wide
   pipelines above (they'll 403/404 — this credential can't list an org's
   full contents) and run `aura_project_details`, `aura_instances`,
   `aura_project_users`, `aura_customer_managed_keys`,
-  `aura_graph_analytics_sessions`, and `aura_agents` instead — these only
+  `aura_graph_analytics_sessions`, `aura_agents`, `aura_databases`, and
+  `aura_virtual_graphs` instead — these only
   need the specific projects listed in `ProjectScopes`, not org-wide
   visibility. Run `aura_project_details` alongside the others so
   `AuraProject` nodes get a real `name` instead of an id-only stub — it
@@ -138,6 +141,12 @@ until the owning pipeline backfills them.
                                                      created_at, host, expiry_date})
       <-[:BELONGS_TO_PROJECT]-(:AuraAgent {id, name, description, dbid, is_private,
                                      is_mcp_enabled, enabled})
+      <-[:BELONGS_TO_PROJECT]-(:AuraVirtualGraph {id, name, status, memory, bolt_url,
+                                            private_bolt_url, public_access_enabled,
+                                            private_access_enabled, data_source_id,
+                                            data_source_type, maximum_bytes_billed,
+                                            created_at, error_detail})
+(:AuraDatabase {instance_id, id, name})-[:BELONGS_TO_INSTANCE]->(:AuraInstance)
 (:AuraInstance)-[:ENCRYPTED_WITH]->(:AuraCustomerManagedKey)   (only if the instance has one)
 (:AuraGraphAnalyticsSession)-[:RUNS_ON]->(:AuraInstance)
 (:AuraGraphAnalyticsSession)-[:CREATED_BY]->(:AuraUser {user_id})
@@ -145,9 +154,17 @@ until the owning pipeline backfills them.
 
 # Shared dimension nodes, reached only via relationships from the resource
 # types above:
-(:AuraInstance | :AuraCustomerManagedKey | :AuraGraphAnalyticsSession)
+(:AuraInstance | :AuraCustomerManagedKey | :AuraGraphAnalyticsSession | :AuraVirtualGraph)
   -[:HOSTED_IN]->(:AuraRegion {name, cloud_provider})
   -[:HOSTED_BY]->(:AuraCloudProvider {name})
+
+# Network access (IP filters):
+(:AuraIpFilter {id, name, description, filtering_disabled, updated_at})
+  -[:BELONGS_TO_ORG]->(:AuraOrganization)
+  -[:APPLIES_TO_ORG]->(:AuraOrganization)
+  -[:APPLIES_TO_PROJECT]->(:AuraProject)
+  -[:APPLIES_TO_INSTANCE]->(:AuraInstance)
+  -[:ALLOWS {description}]->(:AuraIpRange {cidr, address, prefix_len})
 
 # Users, roles, invites:
 (:AuraUser {user_id, email, exempt_from_automatic_removal, last_activity_at,
@@ -188,6 +205,14 @@ region name is only meaningful within one provider's namespace.
   effectively single-database today) but not independently confirmed — the
   raw `dbid` is kept as a property on the node regardless, so it stays
   inspectable even if the relationship guess is wrong.
+- **`aura_ip_filters`, `aura_databases`, `aura_virtual_graphs`** were added
+  from the v2beta1 OpenAPI spec (`https://api.neo4j.io/v2beta1/spec.json`)
+  and are covered by mocked tests, but have not yet been run against a real
+  account. Two specifics are unverified: the virtual-graphs list endpoint
+  marks both `page_limit` and `page_token` as required, so the first request
+  (which sends only `page_limit`) may need adjusting; and not every instance
+  type may expose the databases endpoint. `aura_ip_filters` is org-scoped
+  and needs an Org Admin credential.
 - **Rate limits and retries**: Aura's API allows 25 req/min (free/trial) or
   125 req/min (paid); a full sweep of many projects can plausibly exceed
   that. Requests retry with capped exponential backoff on `429`/`5xx`/
@@ -209,7 +234,7 @@ git clone https://github.com/nodestream-proj/nodestream-plugin-aura
 cd nodestream-plugin-aura
 poetry install
 
-poetry run pytest --cov nodestream_plugin_aura   # 76 tests, all mocked -- no live Aura account touched
+poetry run pytest --cov nodestream_plugin_aura   # 87 tests, all mocked -- no live Aura account touched
 poetry run ruff nodestream_plugin_aura tests
 poetry run black nodestream_plugin_aura tests --check
 poetry run isort nodestream_plugin_aura tests --check-only

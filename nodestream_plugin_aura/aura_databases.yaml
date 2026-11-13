@@ -1,0 +1,38 @@
+# (:AuraDatabase {instance_id, id, name})
+#   -[:BELONGS_TO_INSTANCE]->(:AuraInstance {id})
+#
+# One node per database on an instance (GET .../instances/{id}/databases).
+# The spec only returns {id, name} per database. The key is the composite
+# (instance_id, id), not id alone, because nothing in the spec promises a
+# database id is unique across instances -- two instances could each have a
+# database with the same id, and keying on id alone would merge them into one
+# node. instance_id stays a key property (not just an edge) for that reason.
+#
+# BELONGS_TO_INSTANCE targets the instance by id only; run aura_instances
+# first to avoid stub instance nodes.
+#
+# Project-scoped: uses ProjectScopes (both organization_id and project_id are
+# required). Not all instance types may expose databases; a 403/404 fails the
+# run on purpose rather than yielding a silently-incomplete graph, as with the
+# other project-scoped pipelines.
+- implementation: nodestream_plugin_aura.extractors:AuraDatabaseExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    project_scopes: !config ProjectScopes
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraDatabase
+        key:
+          instance_id: !jmespath 'instance_id'
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+      - type: relationship
+        node_type: AuraInstance
+        relationship_type: BELONGS_TO_INSTANCE
+        node_key:
+          id: !jmespath 'instance_id'

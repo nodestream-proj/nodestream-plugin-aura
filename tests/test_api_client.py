@@ -194,3 +194,61 @@ def test_is_capability_gap_false_for_400_with_unrecognized_reason():
     body = '{"errors":[{"reason":"something-we-have-not-seen-before"}]}'
     error = AuraApiError(400, "https://api.neo4j.io/v1/customer-managed-keys", body)
     assert_that(error.is_capability_gap, equal_to(False))
+
+
+@pytest.mark.asyncio
+async def test_get_data_paginated_follows_links_next_until_null(httpx_mock):
+    mock_token(httpx_mock)
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/v2beta1/things?page_limit=2",
+        json={
+            "data": [{"id": 1}, {"id": 2}],
+            "links": {"next": f"{BASE_URL}/v2beta1/things?page_limit=2&page_token=t2"},
+        },
+    )
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/v2beta1/things?page_limit=2&page_token=t2",
+        json={"data": [{"id": 3}], "links": {"next": None}},
+    )
+
+    subject = AuraApiClient("client-id", "client-secret", BASE_URL)
+    result = await subject.get_data_paginated(
+        "v2beta1", "/things", params={"page_limit": "2"}
+    )
+
+    assert_that(result, equal_to([{"id": 1}, {"id": 2}, {"id": 3}]))
+
+
+@pytest.mark.asyncio
+async def test_get_data_paginated_stops_on_a_repeated_next_url(httpx_mock):
+    # Guard against an API bug (or a next link that points at itself)
+    # turning the walk into an infinite loop.
+    mock_token(httpx_mock)
+    looping_next = f"{BASE_URL}/v2beta1/things?page_token=same"
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/v2beta1/things",
+        json={"data": [{"id": 1}], "links": {"next": looping_next}},
+    )
+    httpx_mock.add_response(
+        url=looping_next,
+        json={"data": [{"id": 2}], "links": {"next": looping_next}},
+    )
+
+    subject = AuraApiClient("client-id", "client-secret", BASE_URL)
+    result = await subject.get_data_paginated("v2beta1", "/things")
+
+    assert_that(result, equal_to([{"id": 1}, {"id": 2}]))
+
+
+@pytest.mark.asyncio
+async def test_get_data_paginated_handles_a_single_page_with_no_links(httpx_mock):
+    mock_token(httpx_mock)
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/v2beta1/things",
+        json={"data": [{"id": 1}]},
+    )
+
+    subject = AuraApiClient("client-id", "client-secret", BASE_URL)
+    result = await subject.get_data_paginated("v2beta1", "/things")
+
+    assert_that(result, equal_to([{"id": 1}]))

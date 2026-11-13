@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -235,3 +236,33 @@ class AuraApiClient:
             return body
         data = body.get("data", body)
         return data if isinstance(data, list) else [data]
+
+    async def get_data_paginated(
+        self,
+        version: str,
+        path: str,
+        params: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """GET a cursor-paginated list and return every page's `data`, joined.
+
+        For endpoints (so far only v2beta1 virtual-graphs) that return
+        `{"data": [...], "links": {"next": <url or null>}}`. `links.next` is
+        documented as a full URL; its query string is replayed verbatim
+        against the same path to fetch the next page, rather than assuming a
+        particular parameter name, and the walk stops when `next` is null or
+        absent. A repeated `next` URL ends the walk too, as a guard against
+        an API bug turning this into an infinite loop.
+        """
+        items: List[Dict[str, Any]] = []
+        seen_next = set()
+        current = params
+        while True:
+            body = await self.get(version, path, current)
+            data = body.get("data", [])
+            items.extend(data if isinstance(data, list) else [data])
+
+            next_url = (body.get("links") or {}).get("next")
+            if not next_url or next_url in seen_next:
+                return items
+            seen_next.add(next_url)
+            current = {k: v[0] for k, v in parse_qs(urlparse(next_url).query).items()}
