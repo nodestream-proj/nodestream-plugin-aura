@@ -1,0 +1,45 @@
+# Expires nodes that no aura_* pipeline has re-ingested within the last
+# `TtlExpiryHours` hours.
+#
+# nodestream only ever upserts: a role that was revoked, an IP range that was
+# removed from an allow list, or an instance that was deleted stays in the graph
+# forever unless something expires it. This pipeline does that, using each
+# object's `last_ingested_at` timestamp (set every time a pipeline writes it).
+#
+# OPT-IN AND EXPLICIT: `TtlExpiryHours` has no default. Set it in this plugin's
+# `config:` in nodestream.yaml. If it is missing, this pipeline deletes nothing
+# and logs a warning (see AuraTimeToLiveExtractor for why it doesn't fall back
+# to nodestream's own 24-hour default). It must be comfortably longer than the
+# longest gap between runs of ANY aura_* pipeline (2x is a sane floor). A
+# pipeline you stop running (or a project you remove from `ProjectScopes`) has
+# its data expire after this long -- intended, but be aware of it.
+#
+# A run that aborts partway (a bare 403/404 fails the run on purpose) simply
+# doesn't refresh the rest, so data older than the window is still removed.
+# Run the relationships pipeline, then the nodes pipeline, AFTER your aura_*
+# pipelines -- never before.
+#
+# Coverage is enforced by tests/test_ttl_coverage.py: every node/relationship
+# type any aura_* pipeline writes must be listed here, so adding a type
+# without adding it to these lists fails CI.
+- implementation: nodestream_plugin_aura.extractors:AuraTimeToLiveExtractor
+  arguments:
+    graph_object_type: NODE
+    expiry_in_hours: !config TtlExpiryHours
+    configurations:
+      - object_type: AuraOrganization
+      - object_type: AuraProject
+      - object_type: AuraInstance
+      - object_type: AuraDatabase
+      - object_type: AuraCustomerManagedKey
+      - object_type: AuraGraphAnalyticsSession
+      - object_type: AuraAgent
+      - object_type: AuraVirtualGraph
+      - object_type: AuraIpFilter
+      - object_type: AuraIpRange
+      - object_type: AuraUser
+      - object_type: AuraRole
+      - object_type: AuraInvite
+      - object_type: MfaMethod
+      - object_type: AuraRegion
+      - object_type: AuraCloudProvider

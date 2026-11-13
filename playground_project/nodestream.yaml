@@ -28,6 +28,14 @@ plugins:
       ProjectScopes:
         - organization_id: !env AURA_ORGANIZATION_ID
           project_id: !env AURA_PROJECT_ID
+      # Opt-in data expiry for aura_ttl_relationships / aura_ttl_nodes: delete
+      # anything no aura_* pipeline has re-ingested within this many hours, so
+      # revoked roles, removed IP ranges and deleted instances don't linger.
+      # Left commented out on purpose -- with it unset the TTL pipelines delete
+      # nothing. Must be well above the gap between your pipeline runs (2x is a
+      # sane floor); see "Keeping the graph current" in the README before
+      # enabling.
+      # TtlExpiryHours: 168
 
 targets:
   neo4j:

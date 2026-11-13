@@ -351,3 +351,92 @@ def test_invite_keyed_on_email_alone_would_have_collided_across_orgs():
         context_org1.desired_ingest.source.key_values,
         equal_to(context_org2.desired_ingest.source.key_values),
     )
+
+
+# --- ip_filters.yaml: ALLOWS -> AuraIpRange, APPLIES_TO_INSTANCE -> AuraInstance ---
+
+
+def allows_interpretation():
+    return RelationshipInterpretation(
+        node_type="AuraIpRange",
+        relationship_type="ALLOWS",
+        iterate_on=jp("allow_list"),
+        node_key={"cidr": jp("cidr")},
+        node_properties={
+            "address": jp("address"),
+            "prefix_len": jp("prefix_len"),
+        },
+        relationship_properties={"description": jp("description")},
+    )
+
+
+def test_allows_iterates_one_relationship_per_allow_list_entry_with_own_description():
+    context = context_for(
+        {
+            "allow_list": [
+                {
+                    "cidr": "10.0.0.0/8",
+                    "address": "10.0.0.0",
+                    "prefix_len": 8,
+                    "description": "vpn",
+                },
+                {
+                    "cidr": "203.0.113.7/32",
+                    "address": "203.0.113.7",
+                    "prefix_len": 32,
+                    "description": "office",
+                },
+            ]
+        }
+    )
+    allows_interpretation().interpret(context)
+
+    relationships = context.desired_ingest.relationships
+    assert_that(relationships, has_length(2))
+    by_cidr = {
+        r.to_node.key_values["cidr"]: r.relationship.properties["description"]
+        for r in relationships
+    }
+    assert_that(by_cidr, equal_to({"10.0.0.0/8": "vpn", "203.0.113.7/32": "office"}))
+
+
+def applies_to_instance_interpretation():
+    return RelationshipInterpretation(
+        node_type="AuraInstance",
+        relationship_type="APPLIES_TO_INSTANCE",
+        find_many=True,
+        node_key={"id": jp("filtered_entities.instances")},
+    )
+
+
+def test_applies_to_instance_fans_out_one_relationship_per_instance_id():
+    context = context_for({"filtered_entities": {"instances": ["inst-1", "inst-2"]}})
+    applies_to_instance_interpretation().interpret(context)
+
+    relationships = context.desired_ingest.relationships
+    assert_that(relationships, has_length(2))
+    instance_ids = [r.to_node.key_values["id"] for r in relationships]
+    assert_that(instance_ids, contains_inanyorder("inst-1", "inst-2"))
+
+
+# --- databases.yaml: composite (instance_id, id) key ---
+
+
+def database_source_node_interpretation():
+    return SourceNodeInterpretation(
+        node_type="AuraDatabase",
+        key={"instance_id": jp("instance_id"), "id": jp("id")},
+        properties={"name": jp("name")},
+    )
+
+
+def test_database_key_includes_instance_id_so_same_db_id_on_two_instances_differs():
+    context_a = context_for({"instance_id": "inst-1", "id": "db-a", "name": "neo4j"})
+    context_b = context_for({"instance_id": "inst-2", "id": "db-a", "name": "neo4j"})
+    database_source_node_interpretation().interpret(context_a)
+    database_source_node_interpretation().interpret(context_b)
+
+    key_a = context_a.desired_ingest.source.key_values
+    key_b = context_b.desired_ingest.source.key_values
+    assert_that(key_a, equal_to({"instance_id": "inst-1", "id": "db-a"}))
+    assert_that(key_b, equal_to({"instance_id": "inst-2", "id": "db-a"}))

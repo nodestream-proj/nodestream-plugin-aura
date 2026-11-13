@@ -1,0 +1,80 @@
+# (:AuraIpFilter {id, name, description, filtering_disabled, updated_at})
+#   -[:BELONGS_TO_ORG]->(:AuraOrganization {id})
+#   -[:APPLIES_TO_ORG]->(:AuraOrganization {id})    (filtered_entities.organizations)
+#   -[:APPLIES_TO_PROJECT]->(:AuraProject {id})     (filtered_entities.projects)
+#   -[:APPLIES_TO_INSTANCE]->(:AuraInstance {id})   (filtered_entities.instances)
+#   -[:ALLOWS {description}]->(:AuraIpRange {cidr, address, prefix_len})
+#
+# Answers "which networks can reach this instance/project" as a traversal:
+# instance <-APPLIES_TO_INSTANCE- filter -ALLOWS-> range. A filter with
+# `filtering_disabled: true` still has its edges -- check that property when
+# asking "is this instance actually restricted", since a disabled filter
+# restricts nothing.
+#
+# :AuraIpRange is a shared node keyed on `cidr` (derived by the extractor as
+# "address/prefix_len"), so "which filters allow 0.0.0.0/0" is one hop. The
+# per-entry `description` lives on the ALLOWS edge, not the node, since the
+# same CIDR can carry different descriptions in different filters.
+#
+# allow_list is a list of objects, so it uses `iterate_on` (not find_many) --
+# see aura_organization_users.yaml for why find_many crashes on object lists.
+# filtered_entities.* are lists of plain id strings, so find_many is correct
+# for those. The APPLIES_TO_* targets are matched by id only: if an instance
+# or project hasn't been loaded yet, nodestream creates a stub node that the
+# aura_instances / aura_projects pipelines later fill in -- run those first
+# if you want to avoid stubs.
+#
+# Org-scoped: needs an Org Admin credential (the endpoint lists the org's
+# filters), like aura_organization_users.
+- implementation: nodestream_plugin_aura.extractors:AuraIpFilterExtractor
+  arguments:
+    client_id: !config ClientId
+    client_secret: !config ClientSecret
+    organization_id: !config OrganizationId
+
+- implementation: nodestream.interpreting:Interpreter
+  arguments:
+    interpretations:
+      - type: source_node
+        node_type: AuraIpFilter
+        key:
+          id: !jmespath 'id'
+        properties:
+          name: !jmespath 'name'
+          description: !jmespath 'description'
+          filtering_disabled: !jmespath 'filtering_disabled'
+          updated_at: !jmespath 'updated_at'
+      - type: relationship
+        node_type: AuraOrganization
+        relationship_type: BELONGS_TO_ORG
+        node_key:
+          id: !jmespath 'organization_id'
+      - type: relationship
+        node_type: AuraOrganization
+        relationship_type: APPLIES_TO_ORG
+        find_many: true
+        node_key:
+          id: !jmespath 'filtered_entities.organizations'
+      - type: relationship
+        node_type: AuraProject
+        relationship_type: APPLIES_TO_PROJECT
+        find_many: true
+        node_key:
+          id: !jmespath 'filtered_entities.projects'
+      - type: relationship
+        node_type: AuraInstance
+        relationship_type: APPLIES_TO_INSTANCE
+        find_many: true
+        node_key:
+          id: !jmespath 'filtered_entities.instances'
+      - type: relationship
+        node_type: AuraIpRange
+        relationship_type: ALLOWS
+        iterate_on: !jmespath 'allow_list'
+        node_key:
+          cidr: !jmespath 'cidr'
+        node_properties:
+          address: !jmespath 'address'
+          prefix_len: !jmespath 'prefix_len'
+        relationship_properties:
+          description: !jmespath 'description'
